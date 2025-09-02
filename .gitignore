@@ -1,2 +1,3 @@
 *.yaml
 llm-proxy
+.vscode
