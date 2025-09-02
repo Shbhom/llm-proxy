@@ -16,15 +16,6 @@ import (
 	"github.com/Shbhom/llm-proxy/internal/types"
 )
 
-// type Pool struct {
-// 	mu     sync.Mutex
-// 	keys   []*types.Key
-// 	state  map[string]*types.KeyState
-// 	st     types.Store
-// 	cfg    *types.Config
-// 	stopCh chan struct{}
-// }
-
 type Pool struct {
 	cfg   *types.Config
 	st    types.Store              // <-- keep a ref to Bolt
@@ -77,47 +68,6 @@ func New(cfg *types.Config, st types.Store) (*Pool, error) {
 
 func (p *Pool) Stop() {}
 
-// Select chooses a key that can serve now or returns earliest ready time.
-// needTokens can be 0 (unknown). Caller may wait up to maxWait.
-// func (p *Pool) Select(needTokens int) (key *types.Key, readyAt time.Time) {
-// 	p.mu.Lock()
-// 	defer p.mu.Unlock()
-
-// 	now := time.Now()
-// 	avail := make([]*types.Key, 0, len(p.keys))
-// 	swr := util.NewSWRR[*types.Key]()
-
-// 	for _, k := range p.keys {
-// 		s := p.state[k.ID]
-// 		if !k.Enabled || !s.Enabled || now.Before(s.DisabledUntil) {
-// 			continue
-// 		}
-// 		if !exhausted(s.MinReq) && !exhaustedDay(s, needTokens) && (needTokens == 0 || s.MinTok.Remaining >= needTokens || s.MinTok.Limit == 0) {
-// 			avail = append(avail, k)
-// 			swr.Add(k, k.Weight)
-// 		}
-// 	}
-
-// 	if len(avail) > 0 {
-// 		k, _ := swr.Next()
-// 		return k, now
-// 	}
-
-// 	// none available → find earliest ready
-// 	type cand struct {
-// 		k  *types.Key
-// 		at time.Time
-// 	}
-// 	var cs []cand
-// 	for _, k := range p.keys {
-// 		s := p.state[k.ID]
-// 		at := earliestReady(s, needTokens)
-// 		cs = append(cs, cand{k, at})
-// 	}
-// 	sort.Slice(cs, func(i, j int) bool { return cs[i].at.Before(cs[j].at) })
-// 	return cs[0].k, cs[0].at
-// }
-
 func (p *Pool) Select(_ int) (*types.Key, time.Time) {
 	n := len(p.keys)
 	if n == 0 {
@@ -145,90 +95,7 @@ func (p *Pool) Select(_ int) (*types.Key, time.Time) {
 	return k, t
 }
 
-// func (p *Pool) ProvisionalConsume(keyID string, needTokens int) {
-// 	p.mu.Lock()
-// 	defer p.mu.Unlock()
-// 	s := p.state[keyID]
-// 	// minute windows roll every minute; conservative decrement
-// 	if s.MinReq.Limit > 0 && s.MinReq.Remaining > 0 {
-// 		s.MinReq.Remaining--
-// 	}
-// 	if needTokens > 0 && s.MinTok.Limit > 0 && s.MinTok.Remaining >= needTokens {
-// 		s.MinTok.Remaining -= needTokens
-// 	}
-// }
-
 func (p *Pool) ProvisionalConsume(_ string, _ int) {}
-
-// func (p *Pool) ReconcileFromHeaders(keyID string, hdr map[string]string, status int) {
-// 	p.mu.Lock()
-// 	defer p.mu.Unlock()
-// 	s := p.state[keyID]
-// 	now := time.Now()
-
-// 	// helper to parse ints & durations
-// 	parseInt := func(k string) (int, bool) {
-// 		if v, ok := hdr[k]; ok {
-// 			var x int
-// 			_, err := fmtSscanf(v, &x)
-// 			if err == nil {
-// 				return x, true
-// 			}
-// 		}
-// 		return 0, false
-// 	}
-// 	parseDur := func(k string) (time.Duration, bool) {
-// 		if v, ok := hdr[k]; ok {
-// 			d, err := time.ParseDuration(v)
-// 			if err == nil {
-// 				return d, true
-// 			}
-// 			// sometimes it's "6s" or milliseconds; fall back to seconds integer
-// 			if n, e := atoiSafe(v); e == nil {
-// 				return time.Duration(n) * time.Second, true
-// 			}
-// 		}
-// 		return 0, false
-// 	}
-
-// 	if lim, ok := parseInt("x-ratelimit-limit-requests"); ok {
-// 		s.MinReq.Limit = lim
-// 	}
-// 	if rem, ok := parseInt("x-ratelimit-remaining-requests"); ok {
-// 		s.MinReq.Remaining = rem
-// 	}
-// 	if dur, ok := parseDur("x-ratelimit-reset-requests"); ok {
-// 		s.MinReq.ResetAt = now.Add(dur)
-// 	}
-
-// 	if lim, ok := parseInt("x-ratelimit-limit-tokens"); ok {
-// 		s.MinTok.Limit = lim
-// 	}
-// 	if rem, ok := parseInt("x-ratelimit-remaining-tokens"); ok {
-// 		s.MinTok.Remaining = rem
-// 	}
-// 	if dur, ok := parseDur("x-ratelimit-reset-tokens"); ok {
-// 		s.MinTok.ResetAt = now.Add(dur)
-// 	}
-
-// 	// day windows may be absent; if present, treat similarly (optional)
-
-// 	// 429 handling via retry-after
-// 	if status == 429 {
-// 		if dur, ok := parseDur("retry-after"); ok {
-// 			s.DisabledUntil = now.Add(dur)
-// 		}
-// 		// set remainings pessimistically
-// 		if s.MinReq.Limit > 0 {
-// 			s.MinReq.Remaining = 0
-// 		}
-// 		if s.MinTok.Limit > 0 {
-// 			s.MinTok.Remaining = 0
-// 		}
-// 	}
-
-// 	_ = p.st.Upsert(context.Background(), s)
-// }
 
 func (p *Pool) ReconcileFromHeaders(keyID string, hdr map[string]string, status int) {
 	k := p.byID[keyID]
@@ -312,13 +179,6 @@ func sha1sum(s string) string {
 	return hex.EncodeToString(h[:])
 }
 
-// tiny safe parsers
-//
-//	func atoiSafe(s string) (int, error) {
-//		var n int
-//		_, err := fmtSscanf(strings.TrimSpace(s), &n)
-//		return n, err
-//	}
 func fmtSscanf(v string, out *int) (int, error) {
 	// very small shim avoiding fmt import in this file’s header list churn
 	// (we’ll just use fmt.Sscanf under the hood)
